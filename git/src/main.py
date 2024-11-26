@@ -79,10 +79,9 @@ class Dish:
     def __str__(self):
         return f"Dish: {self.name}, Category: {self.category}, Price: ${self.price:.2f}"
 
-<<<<<<< HEAD
-=======
 
->>>>>>> second-branch
+
+
 class Customer:
     def __init__(self, name, membership="Regular"):
         self.name = name
