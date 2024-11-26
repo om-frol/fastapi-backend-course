@@ -54,7 +54,7 @@ class Order:
         return f"Order for {self.customer.name}:\n{dish_list}\nTotal: ${self.final_total():.2f}"
 
 
-class GroupOrder(Order):
+class Order:
     def __init__(self, customers):
         super().__init__(customer=None)  # Групповой заказ не привязан к одному клиенту
         self.customers = customers
