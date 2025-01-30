@@ -1,92 +1,74 @@
 import json
+from urllib import request
 from fastapi import FastAPI, HTTPException
-import threading
 
 app = FastAPI()
 
-class TaskManager:
-    def __init__(self, file_path="tasks.json"):
-        self.file_path = file_path
-        self.lock = threading.Lock()
-        self.next_id = self._load_next_id()
+class JsonBinStorage:
+    def __init__(self, api_key, bin_id=None):
+        self.api_key = api_key
+        self.bin_id = bin_id or self._create_bin()
+        self.base_url = f"https://api.jsonbin.io/v3/b/{self.bin_id}"
 
-    def _load_next_id(self):
-        try:
-            with open(self.file_path, "r") as f:
-                tasks = json.load(f)
-                return max((task.get("id", 0) for task in tasks), default=0) + 1
-        except FileNotFoundError:
-            return 1
-
-    def _load_tasks(self):
-        try:
-            with open(self.file_path, "r") as f:
-                return json.load(f)
-        except FileNotFoundError:
-            return []
-
-    def _save_tasks(self, tasks):
-        with open(self.file_path, "w") as f:
-            json.dump(tasks, f, indent=4)
-
-    def get_next_id(self):
-        with self.lock:
-            task_id = self.next_id
-            self.next_id += 1
-            return task_id
+    def _create_bin(self):
+        url = "https://api.jsonbin.io/v3/b"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        req = request.Request(url, headers=headers, method="POST")
+        with request.urlopen(req) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            return data["_id"]
 
     def get_tasks(self):
-        with self.lock:
-            return self._load_tasks()
+        req = request.Request(self.base_url, headers={
+            "Authorization": f"Bearer {self.api_key}"
+        })
+        with request.urlopen(req) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            return data["record"]
 
-    def create_task(self, task):
-        with self.lock:
-            tasks = self._load_tasks()
-            task["id"] = self.get_next_id()
-            tasks.append(task)
-            self._save_tasks(tasks)
-            return task["id"]
+    def update_tasks(self, tasks):
+        data = json.dumps(tasks).encode("utf-8")
+        req = request.Request(self.base_url, data=data, headers={
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }, method="PUT")
+        with request.urlopen(req) as response:
+            pass
 
-    def update_task(self, task_id, task):
-        with self.lock:
-            tasks = self._load_tasks()
-            for i, t in enumerate(tasks):
-                if t["id"] == task_id:
-                    tasks[i].update(task)
-                    self._save_tasks(tasks)
-                    return True
-            return False
-
-    def delete_task(self, task_id):
-        with self.lock:
-            tasks = self._load_tasks()
-            initial_len = len(tasks)
-            tasks = [t for t in tasks if t["id"] != task_id]
-            if len(tasks) < initial_len:
-                self._save_tasks(tasks)
-                return True
-            return False
-
-task_manager = TaskManager()
+storage = JsonBinStorage(api_key="$2a$10$sym4wDB8Jo.ewdwoOl8R9O6A5zPflfoGssY.wnxDEWEuxWtJA4h4y")
 
 @app.get("/tasks")
 def get_tasks():
-    return task_manager.get_tasks()
+    return storage.get_tasks()
 
 @app.post("/tasks")
 def create_task(task: dict):
-    task_id = task_manager.create_task(task)
-    return {"message": "Task created successfully", "task_id": task_id}
+    tasks = storage.get_tasks()
+    task["id"] = max((t.get("id", 0) for t in tasks), default=0) + 1
+    tasks.append(task)
+    storage.update_tasks(tasks)
+    return {"message": "Task created successfully", "task_id": task["id"]}
 
 @app.put("/tasks/{task_id}")
 def update_task(task_id: int, task: dict):
-    if task_manager.update_task(task_id, task):
-        return {"message": "Task updated successfully"}
+    tasks = storage.get_tasks()
+    for i, t in enumerate(tasks):
+        if t["id"] == task_id:
+            tasks[i].update(task)
+            storage.update_tasks(tasks)
+            return {"message": "Task updated successfully"}
     raise HTTPException(status_code=404, detail="Task not found")
 
 @app.delete("/tasks/{task_id}")
 def delete_task(task_id: int):
-    if task_manager.delete_task(task_id):
+    tasks = storage.get_tasks()
+    initial_len = len(tasks)
+    tasks = [t for t in tasks if t["id"] != task_id]
+    if len(tasks) < initial_len:
+        storage.update_tasks(tasks)
         return {"message": "Task deleted successfully"}
     raise HTTPException(status_code=404, detail="Task not found")
 
