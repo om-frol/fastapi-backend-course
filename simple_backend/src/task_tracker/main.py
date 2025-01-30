@@ -1,13 +1,22 @@
 import json
 from fastapi import FastAPI, HTTPException
+import threading
 
 app = FastAPI()
 
 class TaskManager:
     def __init__(self, file_path="tasks.json"):
         self.file_path = file_path
-        self.tasks = self._load_tasks()
-        self.next_id = max((task.get("id", 0) for task in self.tasks), default=0) + 1
+        self.lock = threading.Lock()
+        self.next_id = self._load_next_id()
+
+    def _load_next_id(self):
+        try:
+            with open(self.file_path, "r") as f:
+                tasks = json.load(f)
+                return max((task.get("id", 0) for task in tasks), default=0) + 1
+        except FileNotFoundError:
+            return 1
 
     def _load_tasks(self):
         try:
@@ -16,39 +25,47 @@ class TaskManager:
         except FileNotFoundError:
             return []
 
-    def _save_tasks(self):
+    def _save_tasks(self, tasks):
         with open(self.file_path, "w") as f:
-            json.dump(self.tasks, f, indent=4)
+            json.dump(tasks, f, indent=4)
 
     def get_next_id(self):
-        task_id = self.next_id
-        self.next_id += 1
-        return task_id
+        with self.lock:
+            task_id = self.next_id
+            self.next_id += 1
+            return task_id
 
     def get_tasks(self):
-        return self.tasks
+        with self.lock:
+            return self._load_tasks()
 
     def create_task(self, task):
-        task["id"] = self.get_next_id()
-        self.tasks.append(task)
-        self._save_tasks()
-        return task["id"]
+        with self.lock:
+            tasks = self._load_tasks()
+            task["id"] = self.get_next_id()
+            tasks.append(task)
+            self._save_tasks(tasks)
+            return task["id"]
 
     def update_task(self, task_id, task):
-        for i, t in enumerate(self.tasks):
-            if t["id"] == task_id:
-                self.tasks[i].update(task)
-                self._save_tasks()
-                return True
-        return False
+        with self.lock:
+            tasks = self._load_tasks()
+            for i, t in enumerate(tasks):
+                if t["id"] == task_id:
+                    tasks[i].update(task)
+                    self._save_tasks(tasks)
+                    return True
+            return False
 
     def delete_task(self, task_id):
-        initial_len = len(self.tasks)
-        self.tasks = [t for t in self.tasks if t["id"] != task_id]
-        if len(self.tasks) < initial_len:
-            self._save_tasks()
-            return True
-        return False
+        with self.lock:
+            tasks = self._load_tasks()
+            initial_len = len(tasks)
+            tasks = [t for t in tasks if t["id"] != task_id]
+            if len(tasks) < initial_len:
+                self._save_tasks(tasks)
+                return True
+            return False
 
 task_manager = TaskManager()
 
